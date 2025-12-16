@@ -94,10 +94,15 @@ def predict_news(data: NewsRequest):
     fake_prob = float(proba[class_to_index.get("fake", 1)])
 
     # ===== Majority decision (NO UNCERTAIN) =====
-    if fake_prob >= true_prob:
-        label = "LIKELY FAKE"
-    else:
+# ======================
+# LABEL DECISION LOGIC
+# true >= 40% is GOOD
+# ======================
+    if true_prob >= 0.40:
         label = "LIKELY TRUE"
+    else:
+        label = "LIKELY FAKE"
+
 
     # ===== Confidence (UI-compatible) =====
     raw_confidence = max(true_prob, fake_prob)
