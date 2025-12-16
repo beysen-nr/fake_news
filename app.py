@@ -13,7 +13,7 @@ vectorizer = joblib.load("tfidf_vectorizer.pkl")
 app = FastAPI(
     title="Fake News Detection API",
     description="Style-based political fake news detection",
-    version="1.0.0",
+    version="1.0.1",
 )
 
 # ======================
@@ -50,7 +50,7 @@ CLICKBAIT_PHRASES = [
 
 def detect_clickbait(text: str):
     text_lower = text.lower()
-    return [phrase for phrase in CLICKBAIT_PHRASES if phrase in text_lower]
+    return [p for p in CLICKBAIT_PHRASES if p in text_lower]
 
 def get_top_tfidf_words(text_vectorized, vectorizer, top_n=5):
     feature_names = vectorizer.get_feature_names_out()
@@ -65,7 +65,7 @@ def get_top_tfidf_words(text_vectorized, vectorizer, top_n=5):
 def predict_news(data: NewsRequest):
     text = data.text.strip()
 
-    # ===== Empty input protection =====
+    # ===== Empty input =====
     if not text:
         return {
             "label": "LIKELY TRUE",
@@ -87,13 +87,23 @@ def predict_news(data: NewsRequest):
     text_vectorized = vectorizer.transform([text])
     proba = model.predict_proba(text_vectorized)[0]
 
-    true_prob = float(proba[0])
-    fake_prob = float(proba[1])
+    # ===== Safe class mapping =====
+    class_to_index = {c: i for i, c in enumerate(model.classes_)}
 
+    true_prob = float(proba[class_to_index.get("true", 0)])
+    fake_prob = float(proba[class_to_index.get("fake", 1)])
+
+    # ===== Majority decision (NO UNCERTAIN) =====
+    if fake_prob >= true_prob:
+        label = "LIKELY FAKE"
+    else:
+        label = "LIKELY TRUE"
+
+    # ===== Confidence (UI-compatible) =====
     raw_confidence = max(true_prob, fake_prob)
-    confidence = round(min(raw_confidence, 0.85), 2)  # UI-safe confidence cap
+    confidence = round(min(raw_confidence, 0.85), 2)
 
-    # ===== Article statistics =====
+    # ===== Article stats =====
     sentiment = float(TextBlob(text).sentiment.polarity)
     word_count = len(text.split())
     text_length = len(text)
@@ -102,24 +112,12 @@ def predict_news(data: NewsRequest):
     top_words = get_top_tfidf_words(text_vectorized, vectorizer)
 
     # ======================
-    # LABEL DECISION LOGIC
-    # UNCERTAIN → LIKELY TRUE
-    # ======================
-    if fake_prob >= 0.7:
-        label = "LIKELY FAKE"
-    elif true_prob >= 0.7:
-        label = "LIKELY TRUE"
-    else:
-        # 🔥 Default fallback
-        label = "LIKELY TRUE"
-
-    # ======================
-    # EXPLANATION LOGIC
+    # Explanation logic
     # ======================
     if label == "LIKELY FAKE":
         explanation = (
-            "The model detected linguistic patterns commonly associated with "
-            "misleading or manipulative political news content."
+            "The model detected more linguistic patterns associated with "
+            "misleading or manipulative news content than with neutral reporting."
         )
 
         if clickbait:
@@ -128,20 +126,14 @@ def predict_news(data: NewsRequest):
         if abs(sentiment) > 0.3:
             explanation += " The article uses emotionally charged language."
 
-    elif true_prob >= 0.7:
-        explanation = (
-            "The article was classified as likely real based on formal, "
-            "institutional writing style and the absence of manipulative patterns."
-        )
     else:
         explanation = (
-            "The article appears neutral and professionally written. "
-            "No strong indicators of misinformation were detected, "
-            "so it is classified as likely real."
+            "The article shows more characteristics of neutral, factual reporting "
+            "than of misleading or manipulative content."
         )
 
     # ======================
-    # RESPONSE
+    # Response (unchanged schema)
     # ======================
     return {
         "label": label,
